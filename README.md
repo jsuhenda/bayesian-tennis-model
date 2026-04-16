@@ -1,7 +1,5 @@
 # Bayesian Modelling of ATP Tennis Player Skill from Match Outcomes
 
-**STAT 405 Final Project — Jensen Suhenda (44377570)**
-
 This project applies Bayesian latent-skill models to professional ATP tennis match outcomes, estimating player ability and evaluating whether surface-specific and time-varying skill extensions improve predictive performance.
 
 ---
