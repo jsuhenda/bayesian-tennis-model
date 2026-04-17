@@ -4,6 +4,7 @@ author: "Jensen Suhenda 44377570"
 output:
   pdf_document:
     toc: false
+    latex_engine: xelatex
 urlcolor: cyan
 ---
 
@@ -132,6 +133,8 @@ df_model <- df_2014 %>%
 
 cat("Modelling subset — matches:", nrow(df_model),
     "| players:", length(top_players), "\n")
+
+top_players
 ```
 
 ## EDA: Modelling subset
