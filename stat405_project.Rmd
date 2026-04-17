@@ -1,0 +1,144 @@
+---
+title: "Bayesian Modelling of ATP Tennis Player Skill from Match Outcomes"
+author: "Jensen Suhenda 44377570"
+output: 
+  pdf_document:
+    latex_engine: xelatex
+urlcolor: cyan
+geometry: margin=1in
+fontsize: 10pt
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+```
+
+```{r libs}
+library(dplyr)
+library(readr)
+library(tidyr)
+library(lubridate)
+library(ggplot2)
+library(knitr)
+library(loo)
+```
+
+## 1 Introduction
+
+We study the problem of estimating latent tennis player skill from binary match outcomes using Bayesian inference. The core challenge is that player skill is **unobserved** — only win/loss results are recorded, our goal is to infer player ability and evaluate whether additional model structure improves predictive performance.
+
+This is a real-world inference problem in sports analytics, where ranking systems must account for uncertainty in player performance. We model pairwise match outcomes using latent skill parameters and investigate extensions incorporating surface effects and time-varying ability.
+
+Our research questions are:
+
+1. Can a Bayesian latent-skill model recover meaningful rankings from match outcomes?
+2. Does allowing surface-specific skill improve predictive performance?
+3. Does time-varying skill improve match outcome predictions?
+
+## 2 Data
+
+Dataset link: [ATP Tennis Dataset](https://www.kaggle.com/datasets/dissfya/atp-tennis-2000-2023daily-pull?resource=download&select=atp_tennis.csv)
+
+We use a dataset of ATP tennis matches from 2000–2026, containing approximately 67,000 matches. Each match records the tournament, date, court surface, round, players, match outcome, player rankings, betting odds, and match score.
+
+Under the Bradley--Terry framework, a match reduces to a binary outcome: who won. We therefore retain only the winner, loser, court surface, and year, discarding variables such as betting odds and match scores that are not part of our model.
+
+
+```{r, ech0 = FALSE}
+df <- read_csv("data/atp_tennis.csv")
+
+df_clean <- df %>%
+  mutate(
+    winner_name = Winner,
+    loser_name = ifelse(Winner == Player_1, Player_2, Player_1),
+    surface = Surface,
+    date = as.Date(Date),
+    year = year(date)
+  ) %>%
+  select(winner_name, loser_name, surface, year) %>%
+  filter(
+    !is.na(winner_name),
+    !is.na(loser_name),
+    !is.na(surface),
+    !is.na(date)
+  )
+
+head(df_clean)
+```
+
+Fitting the full dataset (67,000+ matches across 1,000+ unique players) would result
+in an extremely sparse observation matrix: most pairs of players have never met.
+Sparse match records lead to weakly identified posterior distributions for most
+players. We address this in two ways.
+
+First, we restrict to matches from 2014 onwards, which reduces the data to
+approximately the last decade of professional play and aligns with a relatively
+stable era of the tour. Second, we retain only the 50 most active players by total
+match count. Restricting to well-observed players ensures that each player's
+$\beta_i$ is identified by a meaningful number of match outcomes.
+
+Full data wrangling and EDA are in `data_cleaning/wrangling_eda.Rmd` in the [Github
+repository](https://github.com/jsuhenda/bayesian-tennis-model.git). The
+modelling dataset contains matches among the 50 most active players from
+2014–2026.
+
+```{r, include = FALSE}
+df_model <- read_csv("data/df_model.csv")
+
+top_players <- union(df_model$winner_name, df_model$loser_name)
+player_ids  <- tibble(player = sort(top_players), player_id = seq_along(sort(top_players)))
+surface_ids <- tibble(surface = c("Hard","Clay","Grass"), surface_id = 1:3)
+```
+
+## 3 Literature Review
+
+The Bradley--Terry model (Bradley & Terry, 1952) is a standard framework for modeling pairwise comparisons and forms the basis of many sports ranking systems. In this model, the probability that player $i$ defeats player $j$ depends only on the difference in their latent skill parameters, linked through the logistic function.
+
+Extensions of Bradley--Terry to a Bayesian setting have a long history in the sports analytics literature. Glickman (1999) introduced a Bayesian analogue of the Elo rating system in which player strengths are modelled as normally distributed and updated via approximate Bayesian inference after each match. The TrueSkill system (Herbrich et al., 2006) generalised this to multiplayer settings using expectation propagation. 
+
+In tennis specifically, it is well known that player performance depends strongly on court surface. Players often exhibit surface preferences due to differences in playing style and physical conditions. A well-known example is Rafael Nadal, whose performance on clay courts is substantially stronger than on other surfaces. Baker & McHale (2014) applied a paired-comparison model to ATP data and found significant surface-specific components in player skill. This motivates extending the baseline model to include surface-specific skill effects.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# References {.unnumbered}
+
+Baker, R. D., & McHale, I. G. (2014). A dynamic paired comparisons
+model. *European J. Operational Research*, 236(2), 677–684.
+
+Bradley, R. A., & Terry, M. E. (1952). Rank analysis of incomplete block
+designs. *Biometrika*, 39(3–4), 324–345.
+
+Glickman, M. E. (1999). Parameter estimation in large dynamic paired
+comparison experiments. *J. Royal Statistical Society C*, 48(3),
+377–394.
+
+Herbrich, R., Minka, T., & Graepel, T. (2006). TrueSkill: A Bayesian
+skill rating system. *NeurIPS*, 19.
+
