@@ -20,6 +20,7 @@ knitr::opts_chunk$set(
 
 ```{r libs}
 library(dplyr)
+library(readr)
 library(tidyr)
 library(lubridate)
 library(ggplot2)
@@ -29,12 +30,7 @@ library(knitr)
 # Data Loading
 
 ```{r load}
-url <- paste0(
-  "https://raw.githubusercontent.com/",
-  "jsuhenda/bayesian-tennis-model/",
-  "refs/heads/main/atp_tennis.csv"
-)
-df <- read.csv(url)
+df <- read_csv("../data/atp_tennis.csv")
 cat("Rows:", nrow(df), "| Cols:", ncol(df), "\n")
 ```
 
@@ -164,6 +160,27 @@ df_model %>%
        title = "Matches per year (modelling subset)") +
   theme_bw(base_size = 10)
 ```
+## Aggregation into 3-year periods (Model 2)
+
+For Model 2 (time-varying skill), fitting a separate $\beta_{i,t}$ for each year would give $50 \times 12 = 600$ skill parameters, with limited data per player-year cell. To reduce parameter count and improve identifiability within each time slice, we aggregate years into four 3-year periods: 2014–2016, 2017–2019, 2020–2022, and 2023–2026. This gives $50 \times 4 = 200$ skill parameters while still capturing career-level trends.
+
+```{r period-assign}
+df_model <- df_model %>%
+  mutate(period = case_when(
+    year >= 2014 & year <= 2016 ~ "2014-16",
+    year >= 2017 & year <= 2019 ~ "2017-19",
+    year >= 2020 & year <= 2022 ~ "2020-22",
+    year >= 2023              ~ "2023-26"
+  ))
+
+df_model %>%
+  count(period) %>%
+  ggplot(aes(x = period, y = n)) +
+  geom_col(fill = "mediumpurple", width = 0.6) +
+  labs(x = "Period", y = "Matches",
+       title = "Matches per 3-year period (modelling subset)") +
+  theme_bw(base_size = 10)
+```
 
 ## Match coverage matrix (sparsity check)
 
@@ -226,6 +243,6 @@ Save `df_model` as a CSV so the main report can load it directly without re-runn
 the full wrangling pipeline.
 
 ```{r save}
-write.csv(df_model, "df_model.csv", row.names = FALSE)
-cat("Saved df_model.csv with", nrow(df_model), "rows.\n")
+write.csv(df_model, "../data/df_model.csv", row.names = FALSE)
+cat("Saved data/df_model.csv with", nrow(df_model), "rows.\n")
 ```
