@@ -40,13 +40,13 @@ library(loo)
 
 # 1 Introduction
 
-We study the problem of estimating latent tennis player skill from binary match outcomes using Bayesian inference. The core challenge is that player skill is **unobserved** — only win/loss results are recorded, our goal is to infer player ability and evaluate whether additional model structure improves predictive performance.
+We study the problem of estimating latent tennis player skill from binary match outcomes using Bayesian inference. The core challenge is that player skill is **unobserved** — only win/loss results are recorded. Our goal is to infer player ability and evaluate whether additional model structure improves predictive performance.
 
 This is a real-world inference problem in sports analytics, where ranking systems must account for uncertainty in player performance. We model pairwise match outcomes using latent skill parameters and investigate extensions incorporating surface effects and time-varying ability. Our research questions are: (1) can a Bayesian latent-skill model recover meaningful rankings? (2) do surface-specific skill effects improve calibration? (3) does time-varying skill?
 
 # 2 Data
 
-We use the [ATP Tennis Dataset](https://www.kaggle.com/datasets/dissfya/atp-tennis-2000-2023daily-pull) covering 2000–2026. Under the Bradley–Terry framework a match reduces to a binary outcome, so we retain only winner, loser, court surface, and year. Fitting the full dataset (67,000+ matches across 1,000+ unique players) would result in an extremely sparse observation matrix: most pairs of players have never met, which lead to weakly identified posterior distributions for most players. We address this by restricting to matches from 2014 onwards and to the 50 most active players by total match count, yielding ~4,500 matches across Hard, Clay, and Grass (Carpet was phased out of the ATP tour before 2014). Restricting to well-observed players ensures that each player's $\beta_i$ is identified by a meaningful number of match outcomes.
+We use the [ATP Tennis Dataset](https://www.kaggle.com/datasets/dissfya/atp-tennis-2000-2023daily-pull) covering 2000–2026. Under the Bradley–Terry framework a match reduces to a binary outcome, so we retain only winner, loser, court surface, and year. Fitting the full dataset (67,000+ matches across 1,000+ unique players) would result in an extremely sparse observation matrix: most pairs of players have never met, which leads to weakly identified posterior distributions for most players. We address this by restricting to matches from 2014 onwards and to the 50 most active players by total match count, yielding ~4,500 matches across Hard, Clay, and Grass (Carpet was phased out of the ATP tour before 2014). Restricting to well-observed players ensures that each player's $\beta_i$ is identified by a meaningful number of match outcomes.
 
 Full data wrangling, EDA, Stan code, and R scripts are in the [Github repository](https://github.com/jsuhenda/bayesian-tennis-model.git).
 
@@ -78,7 +78,7 @@ Stan code for both models is in Appendix A.
 
 We fit baseline Bradley–Terry in simPPLe on a toy subset of 5 players and 30 matches. Note that SNIS is impractical on the full dataset (ESS collapses in high dimensions, the R implementation is slow), so we use it only to validate Stan.
 
-Using Tsitsipas as the reference player ($\beta_{\text{Tsitsipas}} = 0$), SNIS recovers posterior mean skills of $+1.22$ for Djokovic and $-3.54$ for Dimitrov. The ordering is directionally correct --- Djokovic was the strongest player on the tour during this period and Dimitrov the weakest of the five. The magnitudes are somewhat exaggerated relative to long-run head-to-head frequencies, a known feature of SNIS with a weakly informative prior and only 30 observed matches --- the posterior is pulled aggressively by the particular matches sampled. Nonetheless, the directional correctness is sufficient to confirm the Stan likelihood is correctly coded, motivating the switch to HMC for the full dataset. ESS is $124/10{,}000$ giving RMSE $\approx 2/\sqrt{124} \approx 0.17$ --- reliable to one digit.
+Using Tsitsipas as the reference player ($\beta_{\text{Tsitsipas}} = 0$), SNIS recovers posterior mean skills of $+1.22$ for Djokovic and $-3.54$ for Dimitrov. The ordering is directionally correct --- Djokovic was the strongest player on the tour during this period and Dimitrov the weakest of the five. The magnitudes are somewhat exaggerated relative to long-run head-to-head frequencies, a known feature of SNIS with a weakly informative prior and only 30 observed matches --- the posterior is pulled aggressively by the particular matches sampled. Nonetheless, the directional correctness is sufficient to confirm the Stan likelihood is correctly coded, motivating the switch to HMC for the full dataset. ESS is $124/10{,}000$ giving RMSE $\approx 2/\sqrt{124} \approx 0.17$, reliable to one digit.
 
 ## Method 2: HMC in Stan
 
@@ -93,12 +93,12 @@ The posterior rankings align with expert consensus during this era: Djokovic on 
 ```{r fig-surface, fig.width=6, fig.height=2.5, fig.cap="Surface effects for five notable players (Model 1). Positive values indicate above-baseline performance."}
 knitr::include_graphics("figs/surface_effects.png")
 ```
-Surface effects recover interpretable patterns: \textbf{Nadal} shows the textbook "King of Clay" profile, with a strongly positive clay effect and negative hard effect; \textbf{Federer} shows his strongest effect on hard courts, with negative effects on clay and grass (the latter is an artifact of the sum-to-zero identifiability constraint, which forces his large positive hard effect to be offset, p.s. Federer won 8 Wimbledon titles, on grass court!);  \textbf{Djokovic} shows a mild preference for grass over clay; \textbf{Alcaraz} and \textbf{Sinner} show small, imprecise effects, consistent with their shorter careers offering less surface-specific data.
+Surface effects recover interpretable patterns: \textbf{Nadal} shows the textbook "King of Clay" profile, with a strongly positive clay effect and negative hard effect; \textbf{Federer} shows his strongest effect on hard courts, with negative effects on clay and grass (the latter is an artifact of the sum-to-zero identifiability constraint, forces his large positive hard effect to be offset despite his well-known strength on grass (he won 8 Wimbledon titles);  \textbf{Djokovic} shows a mild preference for grass over clay; \textbf{Alcaraz} and \textbf{Sinner} show small, imprecise effects, consistent with their shorter careers offering less surface-specific data.
 
 ```{r fig-time, fig.width=6, fig.height=2.5, fig.cap="Posterior mean skill over 3-year periods for selected players (Model 2) with 80\\% credible bands."}
 knitr::include_graphics("figs/career_trajectories.png")
 ```
-Career trajectories, expressed as skill relative to Zverev, match historical narratives: **Djokovic** peaks in 2020–22 and slightly declines by 2023–26 with the introduction of the new generation players; **Federer** and **Nadal** decline steadily from earlier peaks as they age; **Alcaraz** and especially **Sinner** rise sharply into 2023–26, reflecting their recent breakthroughs on the tour.
+Career trajectories, expressed as skill relative to Zverev, match historical narratives: \textbf{Djokovic} stays consistently above the pack; starts high before experiencing a decline in 2017-19 then continues upwards; \textbf{Federer} and \textbf{Nadal} decline steadily from earlier peaks as they age; \textbf{Sinner} rises sharply into 2023–26, reflecting his recent breakthrough on the tour; \textbf{Alcaraz} appears flat near $+0.5$ across periods, an artifact of the random-walk prior we discuss in Limitations.
 
 ```{r fig-calib, fig.width=5, fig.height=2.5, fig.cap="Reliability diagram for Model 1 and Model 2. Points on the diagonal indicate perfect calibration."}
 knitr::include_graphics("figs/calibration.png")
