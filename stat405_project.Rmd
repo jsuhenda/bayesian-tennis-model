@@ -27,7 +27,7 @@ library(knitr)
 library(loo)
 ```
 
-## 1 Introduction
+# 1 Introduction
 
 We study the problem of estimating latent tennis player skill from binary match outcomes using Bayesian inference. The core challenge is that player skill is **unobserved** — only win/loss results are recorded, our goal is to infer player ability and evaluate whether additional model structure improves predictive performance.
 
@@ -39,13 +39,13 @@ Our research questions are:
 2. Does allowing surface-specific skill improve predictive performance?
 3. Does time-varying skill improve match outcome predictions?
 
-## 2 Data
+# 2 Data
 
 Dataset link: [ATP Tennis Dataset](https://www.kaggle.com/datasets/dissfya/atp-tennis-2000-2023daily-pull?resource=download&select=atp_tennis.csv)
 
 We use a dataset of ATP tennis matches from 2000–2026, containing approximately 67,000 matches. Each match records the tournament, date, court surface, round, players, match outcome, player rankings, betting odds, and match score.
 
-Under the Bradley--Terry framework, a match reduces to a binary outcome: who won. We therefore retain only the winner, loser, court surface, and year, discarding variables such as betting odds and match scores that are not part of our model.
+Under the Bradley--Terry framework, a match reduces to a binary outcome: who won. We therefore retain only the winner, loser, court surface, and year.
 
 
 ```{r, ech0 = FALSE}
@@ -86,15 +86,46 @@ repository](https://github.com/jsuhenda/bayesian-tennis-model.git). The
 modelling dataset contains matches among the 50 most active players from
 2014–2026.
 
-```{r, include = FALSE}
+```{r load-data, include=FALSE}
 df_model <- read_csv("data/df_model.csv")
 
-top_players <- union(df_model$winner_name, df_model$loser_name)
-player_ids  <- tibble(player = sort(top_players), player_id = seq_along(sort(top_players)))
-surface_ids <- tibble(surface = c("Hard","Clay","Grass"), surface_id = 1:3)
+# Player and surface indexing (3 surfaces — Carpet phased out pre-2014)
+top_players <- sort(union(df_model$winner_name, df_model$loser_name))
+player_ids  <- tibble(player = top_players, player_id = seq_along(top_players))
+surface_ids <- tibble(surface = c("Hard", "Clay", "Grass"), surface_id = 1:3)
+
+# 3-year period index for Model 2
+df_model <- df_model %>%
+  mutate(period = case_when(
+    year >= 2014 & year <= 2016 ~ 1,
+    year >= 2017 & year <= 2019 ~ 2,
+    year >= 2020 & year <= 2022 ~ 3,
+    year >= 2023              ~ 4
+  ))
+
+# Stan-ready data
+df_stan <- df_model %>%
+  left_join(player_ids, by = c("winner_name" = "player")) %>%
+  rename(winner_id = player_id) %>%
+  left_join(player_ids, by = c("loser_name" = "player")) %>%
+  rename(loser_id = player_id) %>%
+  left_join(surface_ids, by = "surface") %>%
+  filter(!is.na(surface_id))
+
+stan_data_m1 <- list(
+  N = nrow(df_stan), P = length(top_players), S = 3,
+  winner = df_stan$winner_id, loser = df_stan$loser_id,
+  surface = df_stan$surface_id
+)
+
+stan_data_m2 <- list(
+  N = nrow(df_stan), P = length(top_players), T = 4,
+  winner = df_stan$winner_id, loser = df_stan$loser_id,
+  period = df_stan$period
+)
 ```
 
-## 3 Literature Review
+# 3 Literature Review
 
 The Bradley--Terry model (Bradley & Terry, 1952) is a standard framework for modeling pairwise comparisons and forms the basis of many sports ranking systems. In this model, the probability that player $i$ defeats player $j$ depends only on the difference in their latent skill parameters, linked through the logistic function.
 
@@ -102,6 +133,243 @@ Extensions of Bradley--Terry to a Bayesian setting have a long history in the sp
 
 In tennis specifically, it is well known that player performance depends strongly on court surface. Players often exhibit surface preferences due to differences in playing style and physical conditions. A well-known example is Rafael Nadal, whose performance on clay courts is substantially stronger than on other surfaces. Baker & McHale (2014) applied a paired-comparison model to ATP data and found significant surface-specific components in player skill. This motivates extending the baseline model to include surface-specific skill effects.
 
+# 4 Model Specification
+
+## Baseline Bradley--Terry
+
+Each player $i$ has a latent skill $\beta_i \in \mathbb{R}$. For a match
+between players $i$ and $j$:
+$$
+Y_{ij} \mid \beta \;\sim\; \text{Bernoulli}(p_{ij}), \qquad
+\text{logit}(p_{ij}) = \beta_i - \beta_j.
+$$
+We fix $\beta_1 = 0$ for identifiability and place weakly informative
+priors $\beta_i \sim \mathcal{N}(0, 9)$ on all remaining players. The
+choice $\sigma = 3$ implies that skill differences of 3 on the logit
+scale — corresponding to win probabilities above 95% — are plausible but
+not the norm, consistent with the frequency of dominant matchups in
+professional tennis.
+
+## Model 1: Surface-Specific Skill
+
+Player $i$'s effective skill on surface $s \in \{\text{Hard, Clay,
+Grass}\}$ is $\beta_i + \gamma_{i,s}$, giving:
+$$
+\text{logit}(p_{ij,s}) = (\beta_i + \gamma_{i,s}) - (\beta_j + \gamma_{j,s}).
+$$
+We impose $\sum_s \gamma_{i,s} = 0$ per player for identifiability, with
+hierarchical prior $\gamma_{i,s} \sim \mathcal{N}(0, \tau_\gamma^2)$,
+$\tau_\gamma \sim \text{HalfNormal}(1)$. The shared $\tau_\gamma$
+regularises surface effects toward zero when surface data are sparse,
+yielding $50 \times 3 = 150$ surface parameters in total.
+
+## Model 2: Time-Varying Skill
+
+To reduce parameter count while capturing career-level trends, we
+aggregate seasons into four 3-year periods: 2014--2016, 2017--2019,
+2020--2022, and 2023--2026. Player skill evolves across periods $t$ via a
+random walk:
+$$
+\beta_{i,t} = \beta_{i,t-1} + \varepsilon_{i,t}, \quad
+\varepsilon_{i,t} \sim \mathcal{N}(0, \tau^2), \quad
+\tau \sim \text{HalfNormal}(0.5),
+$$
+with initial condition $\beta_{i,1} \sim \mathcal{N}(0, 9)$ and reference
+player fixed at $\beta_{1,t} = 0$ for all $t$. This gives $49 \times 4 =
+196$ skill parameters. Stan code for both models is in the Appendix.
+
+# 5 Posterior Inference
+
+## Method 1: SNIS via simPPLe (correctness check)
+
+We implement the baseline Bradley--Terry model in simPPLe on a small
+subset of real matches: the top 5 active players from our dataset and a sample
+of 30 matches between them. 
+
+Note that SNIS is impractical on the full dataset: its effective sample size collapses in high dimensions, and simPPLe's non-vectorised R implementation makes large runs prohibitively slow. We therefore apply SNIS to a small toy subset as a correctness check: if SNIS and HMC posterior means agree on this small problem, the Stan implementation is likely correct.
+
+```{r}
+# Build a small real-data subset: 5 most active players, 30 sampled matches
+toy_players <- df_model %>%
+  pivot_longer(c(winner_name, loser_name), values_to = "player") %>%
+  count(player, sort = TRUE) %>%
+  slice(1:5) %>%
+  pull(player)
+
+# put someone at index 1 as reference
+ref_player <- "Tsitsipas S."
+toy_players <- c(ref_player, setdiff(toy_players, ref_player))
+```
+
+```{r, include = FALSE}
+toy_df <- df_model %>%
+  filter(winner_name %in% toy_players,
+         loser_name  %in% toy_players) %>%
+  slice_sample(n = 30) %>%
+  mutate(
+    # convert to index 1..5 within toy_players, then encode as
+    # i = lower-indexed player, j = higher-indexed player,
+    # outcome = 1 if player i won
+    w_idx = match(winner_name, toy_players),
+    l_idx = match(loser_name,  toy_players),
+    i_idx = pmin(w_idx, l_idx),
+    j_idx = pmax(w_idx, l_idx),
+    toy_result = as.integer(w_idx == i_idx)
+  )
+
+i_idx       <- toy_df$i_idx
+j_idx       <- toy_df$j_idx
+toy_results <- toy_df$toy_result
+```
+
+```{r snis, echo=TRUE, eval=FALSE}
+source("utilities/simple.R") 
+source("utilities/simple_utils.R")
+set.seed(405)
+
+# simPPLe model: player 1 fixed at beta = 0, infer beta_2..beta_5
+bt_toy <- function() {
+  beta <- c(0, simulate(Norm(0, 3)), simulate(Norm(0, 3)),
+               simulate(Norm(0, 3)), simulate(Norm(0, 3)))
+  for (k in seq_along(toy_results))
+    observe(toy_results[k], Bern(plogis(beta[i_idx[k]] - beta[j_idx[k]])))
+  return(beta[5])
+}
+posterior(bt_toy, 10000)
+ess(posterior_particles(bt_toy, 10000))
+```
+Using Tsitsipas as the reference player ($\beta_{\text{Tsitsipas}} = 0$), SNIS recovers posterior mean skills of $+1.05$ for Djokovic and $-1.77$ for Dimitrov. The ordering is directionally correct --- Djokovic was the strongest player on the tour during this period and Dimitrov the weakest of the five. On the probability scale, these values imply Tsitsipas beats Djokovic with probability $1/(1 + e^{1.05}) \approx 0.26$, and Tsitsipas beats Dimitrov with probability $1/(1 + e^{-1.77}) \approx 0.85$, consistent with known head-to-head records. This gives us initial confidence that the Stan implementation, which uses the same Bradley--Terry likelihood, is correct. The effective sample size is $144$ out of $10{,}000$ particles, giving $\text{RMSE} \approx 2/\sqrt{144} \approx 0.17$, so posterior means are reliable to one decimal place --- sufficient for a correctness check but too coarse for publication-quality estimates, motivating the switch to HMC for the full dataset.
+
+## Method 2: HMC in Stan
+
+We fit both models using Stan's NUTS sampler (Hamiltonian Monte Carlo): 4 chains, 1,000 warmup + 2,000 sampling iterations (8,000 posterior draws).
+
+```{r stan-fit, echo=TRUE, eval=FALSE}
+library(cmdstanr)
+mod_m1 <- cmdstan_model("stan/model1.stan")
+mod_m2 <- cmdstan_model("stan/model2.stan")
+
+fit_m1 <- mod_m1$sample(
+  data = stan_data_m1, seed = 405, chains = 4, 
+  iter_warmup = 1000, iter_sampling = 2000, adapt_delta = 0.95)
+
+fit_m2 <- mod_m2$sample(
+  data = stan_data_m2, seed = 405, chains = 4, 
+  iter_warmup = 1000, iter_sampling = 2000, adapt_delta = 0.95)
+
+fit_m1$save_object("fits/fit_m1.rds")
+fit_m2$save_object("fits/fit_m2.rds")
+```
+
+
+```{r load-fits, include=FALSE}
+# Load the cached fits on every knit
+fit_m1 <- readRDS("fits/fit_m1.rds")
+fit_m2 <- readRDS("fits/fit_m2.rds")
+```
+
+# 6 Results
+
+## Posterior Skill Ranking Plot
+```{r, echo=FALSE, fig.width=6, fig.height=3}
+beta_df <- fit_m1$summary("beta", mean = mean, ~quantile(.x, c(0.1, 0.9))) %>%
+  mutate(player_id = as.integer(gsub("beta\\[|\\]", "", variable))) %>%
+  left_join(player_ids, by = "player_id") %>%
+  arrange(desc(mean)) %>%
+  slice(1:20)
+
+ggplot(beta_df, aes(x = reorder(player, mean), y = mean,
+                    ymin = `10%`, ymax = `90%`)) +
+  geom_pointrange(size = 0.3) +
+  coord_flip() +
+  labs(x = NULL, y = "Posterior skill (logit scale)") +
+  theme_bw(base_size = 9)
+```
+
+## Surface Effects Plot
+
+```{r, echo=FALSE, fig.width=6, fig.height=3}
+gamma_df <- fit_m1$summary("gamma", mean = mean, ~quantile(.x, c(0.1, 0.9))) %>%
+  mutate(
+    idx     = gsub("gamma\\[|\\]", "", variable),
+    player_id = as.integer(sub(",.*", "", idx)),
+    surf_id   = as.integer(sub(".*,", "", idx))
+  ) %>%
+  left_join(player_ids, by = "player_id") %>%
+  left_join(surface_ids, by = c("surf_id" = "surface_id")) %>%
+  filter(player %in% c("Nadal R.", "Djokovic N.", "Alcaraz C.",
+                        "Sinner J.", "Federer R."))
+
+ggplot(gamma_df, aes(x = surface, y = mean, ymin = `10%`, ymax = `90%`,
+                     color = surface)) +
+  geom_pointrange(show.legend = FALSE) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50") +
+  facet_wrap(~player, ncol = 5) +
+  labs(x = NULL, y = "Surface effect (logit)") +
+  theme_bw(base_size = 8)
+```
+
+## Career Trajectories Plot
+```{r, echo=FALSE, fig.width=6, fig.height=3}
+period_labels <- c("2014-16", "2017-19", "2020-22", "2023-26")
+
+beta_t_df <- fit_m2$summary("beta", mean = mean, ~quantile(.x, c(0.1, 0.9))) %>%
+  mutate(
+    idx       = gsub("beta\\[|\\]", "", variable),
+    player_id = as.integer(sub(",.*", "", idx)),
+    period    = as.integer(sub(".*,", "", idx))
+  ) %>%
+  left_join(player_ids, by = "player_id") %>%
+  filter(player %in% c("Nadal R.", "Federer R.", "Djokovic N.", "Alcaraz C.", "Sinner J."))
+
+ggplot(beta_t_df, aes(x = period, y = mean, ymin = `10%`, ymax = `90%`,
+                      color = player, fill = player)) +
+  geom_ribbon(alpha = 0.15, color = NA) +
+  geom_line() + geom_point() +
+  scale_x_continuous(breaks = 1:4, labels = period_labels) +
+  labs(x = NULL, y = "Skill (logit)") +
+  theme_bw(base_size = 9)
+```
+
+## Model Comparison: Calibration
+
+We compare the two models using a **reliability diagram**, which plots predicted probabilities against observed frequencies across binned probability ranges. A well-calibrated model produces points along the diagonal: when the model says an event has probability $p$, the event actually occurs with frequency $p$.
+
+Since our `generated quantities` block reports the probability that the winner won each match (always 1 by construction), we randomly reframe half the matches from the loser's perspective ($p \to 1-p$, outcome $\to 0$). This spreads predictions across the full 0--1 range with genuine 0/1 outcomes, allowing a meaningful calibration check.
+
+```{r calibration, echo=TRUE, eval=FALSE}
+p_winner_m1 <- fit_m1$summary("p_pred")$mean
+p_winner_m2 <- fit_m2$summary("p_pred")$mean
+
+set.seed(405)
+flip <- rbinom(length(p_winner_m1), 1, 0.5)
+
+calib_df <- bind_rows(
+  tibble(p_pred  = ifelse(flip == 1, 1 - p_winner_m1, p_winner_m1),
+         outcome = ifelse(flip == 1, 0, 1),
+         model   = "Model 1 (surface)"),
+  tibble(p_pred  = ifelse(flip == 1, 1 - p_winner_m2, p_winner_m2),
+         outcome = ifelse(flip == 1, 0, 1),
+         model   = "Model 2 (time)")
+) %>%
+  mutate(bin = cut(p_pred, breaks = seq(0, 1, 0.1), include.lowest = TRUE)) %>%
+  group_by(model, bin) %>%
+  summarise(mean_pred = mean(p_pred),
+            mean_obs  = mean(outcome),
+            n         = dplyr::n(),
+            .groups   = "drop")
+
+ggplot(calib_df, aes(x = mean_pred, y = mean_obs, color = model)) +
+  geom_abline(slope = 1, intercept = 0, linetype = "dashed", color = "gray50") +
+  geom_line() +
+  geom_point(aes(size = n), alpha = 0.7) +
+  scale_size_continuous(range = c(1, 4), guide = "none") +
+  coord_fixed(xlim = c(0, 1), ylim = c(0, 1)) +
+  labs(x = "Predicted probability", y = "Observed frequency", color = NULL) +
+  theme_bw(base_size = 9)
+```
+
+Both models are well-calibrated: predicted probabilities closely track observed frequencies across the full 0-1 range, with both curves hugging the diagonal. The two models are nearly indistinguishable in calibration, suggesting that while surface effects and time-varying skill capture different aspects of player performance, neither meaningfully improves calibration over the other. This supports the validity of our Bayesian Bradley-Terry framework: the posterior predicted probabilities are well-behaved and can be interpreted at face value.
 
 
 
@@ -110,21 +378,92 @@ In tennis specifically, it is well known that player performance depends strongl
 
 
 
+\newpage
 
+# Appendix: Stan Code {.unnumbered}
 
+## Model 1 --- Surface Effects {.unnumbered}
 
+```stan
+data {
+  int<lower=1> N; 
+  int<lower=1> P; 
+  int<lower=1> S;
+  array[N] int winner; 
+  array[N] int loser; 
+  array[N] int surface;
+}
+parameters {
+  vector[P-1] beta_raw;
+  matrix[P, S] gamma_raw;
+  real<lower=0> tau_gamma;
+}
+transformed parameters {
+  vector[P] beta;
+  beta[1] = 0; beta[2:P] = beta_raw;
+  matrix[P, S] gamma;
+  for (p in 1:P) gamma[p,] = gamma_raw[p,] - mean(gamma_raw[p,]);
+}
+model {
+  beta_raw ~ normal(0, 3);
+  tau_gamma ~ normal(0, 1);
+  to_vector(gamma_raw) ~ normal(0, tau_gamma);
+  for (n in 1:N) {
+    real lp = beta[winner[n]] + gamma[winner[n], surface[n]]
+            - beta[loser[n]]  - gamma[loser[n],  surface[n]];
+    1 ~ bernoulli_logit(lp);
+  }
+}
+generated quantities {
+  vector[N] log_lik;
+  vector[N] p_pred;
+  for (n in 1:N) {
+    real lp = beta[winner[n]] + gamma[winner[n], surface[n]]
+            - beta[loser[n]]  - gamma[loser[n],  surface[n]];
+    log_lik[n] = bernoulli_logit_lpmf(1 | lp);
+    p_pred[n]  = inv_logit(lp);
+  }
+}
+```
 
+## Model 2 --- Time-Varying Skill {.unnumbered}
 
-
-
-
-
-
-
-
-
-
-
+```stan
+data {
+  int<lower=1> N; 
+  int<lower=1> P; 
+  int<lower=1> T;
+  array[N] int winner; 
+  array[N] int loser; 
+  array[N] int period;
+}
+parameters {
+  matrix[P-1, T] beta_raw;
+  real<lower=0> tau;
+}
+transformed parameters {
+  matrix[P, T] beta;
+  beta[1,] = rep_row_vector(0, T);
+  beta[2:P,] = beta_raw;
+}
+model {
+  tau ~ normal(0, 0.5);
+  beta_raw[,1] ~ normal(0, 3);
+  for (t in 2:T) beta_raw[,t] ~ normal(beta_raw[,t-1], tau);
+  for (n in 1:N) {
+    1 ~ bernoulli_logit(beta[winner[n], period[n]] - beta[loser[n], period[n]]);
+  }
+}
+generated quantities {
+  vector[N] log_lik;
+  vector[N] p_pred;
+  for (n in 1:N) {
+    real lp = beta[winner[n], period[n]] - beta[loser[n], period[n]];
+    log_lik[n] = bernoulli_logit_lpmf(1 | lp);
+    p_pred[n]  = inv_logit(lp);
+  }
+}
+```
 
 
 # References {.unnumbered}
