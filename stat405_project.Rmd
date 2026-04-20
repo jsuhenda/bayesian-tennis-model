@@ -42,11 +42,11 @@ library(loo)
 
 We study the problem of estimating latent tennis player skill from binary match outcomes using Bayesian inference. The core challenge is that player skill is **unobserved** — only win/loss results are recorded. Our goal is to infer player ability and evaluate whether additional model structure improves predictive performance.
 
-This is a real-world inference problem in sports analytics, where ranking systems must account for uncertainty in player performance. We model pairwise match outcomes using latent skill parameters and investigate extensions incorporating surface effects and time-varying ability. Our research questions are: (1) can a Bayesian latent-skill model recover meaningful rankings? (2) do surface-specific skill effects improve calibration? (3) does time-varying skill?
+This is a real-world inference problem in sports analytics, where ranking systems must account for uncertainty in player performance. We model pairwise match outcomes using latent skill parameters and investigate extensions incorporating surface effects and time-varying ability. Our research questions are: (1) can a Bayesian latent-skill model recover meaningful rankings? (2) do surface-specific skill effects improve calibration? (3) Does time-varying skill improve match outcome predictions?
 
 # 2 Data
 
-We use the [ATP Tennis Dataset](https://www.kaggle.com/datasets/dissfya/atp-tennis-2000-2023daily-pull) covering 2000–2026. Under the Bradley–Terry framework a match reduces to a binary outcome, so we retain only winner, loser, court surface, and year. Fitting the full dataset (67,000+ matches across 1,000+ unique players) would result in an extremely sparse observation matrix: most pairs of players have never met, which leads to weakly identified posterior distributions for most players. We address this by restricting to matches from 2014 onwards and to the 50 most active players by total match count, yielding ~4,500 matches across Hard, Clay, and Grass (Carpet was phased out of the ATP tour before 2014). Restricting to well-observed players ensures that each player's $\beta_i$ is identified by a meaningful number of match outcomes.
+We use the [ATP Tennis Dataset](https://www.kaggle.com/datasets/dissfya/atp-tennis-2000-2023daily-pull) covering 2000–2026. Under the Bradley–Terry framework a match reduces to a binary outcome, so we retain only winner, loser, court surface, and year. Fitting the full dataset (67,000+ matches across 1,000+ unique players) would result in an extremely sparse observation matrix: most pairs of players have never met, which leads to weakly identified posterior distributions. To address this, we restrict to matches from 2014 onward and to the 50 most active players by match count, yielding approximately 4,500 matches across Hard, Clay, and Grass surfaces. This ensures that each player's $\beta_i$ is identified by a meaningful number of match outcomes.
 
 Full data wrangling, EDA, Stan code, and R scripts are in the [Github repository](https://github.com/jsuhenda/bayesian-tennis-model.git).
 
@@ -60,15 +60,16 @@ In tennis specifically, it is well known that player performance depends strongl
 
 **Baseline Bradley–Terry.** Each player $i$ has latent skill $\beta_i \in \mathbb{R}$. For a match between $i$ and $j$:
 $$Y_{ij} \mid \beta \sim \text{Bernoulli}(p_{ij}), \quad \text{logit}(p_{ij}) = \beta_i - \beta_j.$$
-We fix $\beta_{\text{Zverev}} = 0$ as the reference player for identifiability and place $\beta_i \sim \mathcal{N}(0, 9)$ on remaining players. Zverev is chosen as a consistently active player across the full 2014–2026 period, giving a stable anchor across all four time periods. The choice $\sigma = 3$ allows skill differences up to 3 (win probabilities >95%) as plausible but not typical.
+To ensure identifiability, we fix $\beta_{\text{Zverev}} = 0$ as a reference player and assign $\beta_i \sim \mathcal{N}(0, 9)$ for all other players. Zverev is chosen as a consistently active player across the full 2014–2026 period, giving a stable anchor across all four time periods. The choice $\sigma = 3$ allows skill differences up to 3 (win probabilities >95%), accounting for substantial variation in skill while keeping extreme differences unlikely.
+
 
 **Model 1: Surface-specific skill.** Each player gets a surface adjustment $\gamma_{i,s}$ for $s \in \{\text{Hard, Clay, Grass}\}$:
 $$\text{logit}(p_{ij,s}) = (\beta_i + \gamma_{i,s}) - (\beta_j + \gamma_{j,s}).$$
-We impose $\sum_s \gamma_{i,s} = 0$ per player for identifiability, with hierarchical prior $\gamma_{i,s} \sim \mathcal{N}(0, \tau_\gamma^2)$, $\tau_\gamma \sim \text{HalfNormal}(1)$. The shared $\tau_\gamma$ regularises surface effects when data are sparse. Total: 150 surface + 49 skill parameters.
+We impose $\sum_s \gamma_{i,s} = 0$ per player for identifiability, with hierarchical prior $\gamma_{i,s} \sim \mathcal{N}(0, \tau_\gamma^2)$, $\tau_\gamma \sim \text{HalfNormal}(1)$. The shared $\tau_\gamma$ regularises surface effects when data are sparse.
 
 **Model 2: Time-varying skill.** We aggregate seasons into four 3-year periods (2014–16, 2017–19, 2020–22, 2023–26) and let skill evolve as a random walk:
 $$\beta_{i,t} = \beta_{i,t-1} + \varepsilon_{i,t}, \; \varepsilon_{i,t} \sim \mathcal{N}(0, \tau^2), \; \tau \sim \text{HalfNormal}(0.5),$$
-with $\beta_{i,1} \sim \mathcal{N}(0, 9)$ and $\beta_{1,t} = 0$ for all $t$. Total: 196 skill parameters.
+with $\beta_{i,1} \sim \mathcal{N}(0, 9)$ and $\beta_{1,t} = 0$ for all $t$. This allows gradual changes in player ability over time.
 
 Stan code for both models is in Appendix A.
 
@@ -93,28 +94,29 @@ The posterior rankings align with expert consensus during this era: Djokovic on 
 ```{r fig-surface, fig.width=6, fig.height=2.5, fig.cap="Surface effects for five notable players (Model 1). Positive values indicate above-baseline performance."}
 knitr::include_graphics("figs/surface_effects.png")
 ```
-Surface effects recover interpretable patterns: \textbf{Nadal} shows the textbook "King of Clay" profile, with a strongly positive clay effect and negative hard effect; \textbf{Federer} shows his strongest effect on hard courts, with negative effects on clay and grass (the latter is an artifact of the sum-to-zero identifiability constraint, forces his large positive hard effect to be offset despite his well-known strength on grass (he won 8 Wimbledon titles);  \textbf{Djokovic} shows a mild preference for grass over clay; \textbf{Alcaraz} and \textbf{Sinner} show small, imprecise effects, consistent with their shorter careers offering less surface-specific data.
+Surface effects recover interpretable patterns: \textbf{Nadal} shows the textbook "King of Clay" profile, with a strongly positive clay effect and negative hard effect; Federer exhibits his strongest effect on hard courts. His negative estimated effects on clay and grass are partly due to the sum-to-zero constraint: since one surface must offset the others, a strong positive hard-court effect forces relative reductions elsewhere. This does not imply poor performance on grass, where Federer is historically dominant, but reflects the model’s identifiability structure. \textbf{Djokovic} shows a mild preference for grass over clay; \textbf{Alcaraz} and \textbf{Sinner} show small, imprecise effects, consistent with their shorter careers offering less surface-specific data.
 
 ```{r fig-time, fig.width=6, fig.height=2.5, fig.cap="Posterior mean skill over 3-year periods for selected players (Model 2) with 80\\% credible bands."}
 knitr::include_graphics("figs/career_trajectories.png")
 ```
-Career trajectories, expressed as skill relative to Zverev, match historical narratives: \textbf{Djokovic} stays consistently above the pack; starts high before experiencing a decline in 2017-19 then continues upwards; \textbf{Federer} and \textbf{Nadal} decline steadily from earlier peaks as they age; \textbf{Sinner} rises sharply into 2023–26, reflecting his recent breakthrough on the tour; \textbf{Alcaraz} appears flat near $+0.5$ across periods, an artifact of the random-walk prior we discuss in Limitations.
+Career trajectories, expressed as skill relative to Zverev, match historical narratives: \textbf{Djokovic} remains consistently at the top. \textbf{Federer} and \textbf{Nadal} decline steadily from earlier peaks as they age; \textbf{Sinner} rises sharply into 2023–26, reflecting his recent breakthrough on the tour; \textbf{Alcaraz} appears flat near $+0.5$ across periods, an artifact of the random-walk prior we discuss in Limitations.
 
 ```{r fig-calib, fig.width=5, fig.height=2.5, fig.cap="Reliability diagram for Model 1 and Model 2. Points on the diagonal indicate perfect calibration."}
 knitr::include_graphics("figs/calibration.png")
 ```
-Both models are **well-calibrated**: predicted probabilities closely track observed frequencies across the full 0–1 range, with both curves hugging the diagonal. The two models are nearly indistinguishable in calibration, suggesting that while surface effects and time-varying skill capture different aspects of player performance, neither meaningfully improves calibration over the other. This supports the validity of the Bayesian Bradley–Terry framework — posterior predicted probabilities can be interpreted at face value. Calibration code is in Appendix C.
+Both models appear **well-calibrated**: predicted probabilities closely track observed frequencies across the full 0–1 range, with both curves hugging the diagonal. The two models are nearly indistinguishable in calibration, suggesting that while surface effects and time-varying skill capture different aspects of player performance, neither meaningfully improves calibration over the other. However, stronger comparison would require out-of-sample posterior predictive evaluation. Calibration code is in Appendix C.
 
 # 7 Discussion
 
-Our Bayesian framework recovers sensible player rankings, captures the surface heterogeneity documented in the tennis literature (Nadal on clay, Federer on hard), and produces career trajectories consistent with historical player arcs. Both extensions are well-calibrated but neither improves on the other, suggesting that at this scale, surface-specific skill and time-varying skill encode comparable amounts of predictive information through different structural assumptions.
+\section{Discussion}
 
-\textbf{Limitations.} 
-We discard set and game scores, which carry information about margin of victory beyond the binary win/loss outcome. Restricting to 50 players introduces selection bias, and players with short pre-2014 careers (Alcaraz, Sinner) have fewer training observations, which manifests as wider credible intervals. The Bradley-Terry framework assumes match independence, so momentum and head-to-head dynamics are not captured. A joint surface-and-time model would be a natural next step but adds substantial parameters and risks non-identifiability without further regularisation.
+Our Bayesian framework recovers sensible player rankings, captures known surface-specific performance patterns, and produces career trajectories consistent with historical narratives. Both model extensions are well-calibrated in-sample, but neither clearly outperforms the other. This suggests that surface effects and time variation encode similar predictive information through different modeling assumptions.
 
-One notable limitation is a consequence of the random-walk prior: players with no pre-2021 matches (Alcaraz, Sinner) receive backward-propagated skill estimates in early periods. Because Alcaraz sits around $+0.5$ above Zverev in 2023-26, the model infers his 2014-16 skill was also around $+0.5$, up to drift $\tau$. This is unphysical — Alcaraz was 11 years old in 2014 — and reflects a limitation of the stationary random-walk assumption. A more realistic model would only activate a player's skill after their first observed match, which we leave to future work.
+\textbf{Limitations.} We discard set and game scores, which contain additional information about match dominance. Restricting to 50 players introduces selection bias, and players with shorter careers have wider credible intervals. The Bradley–Terry model assumes independence between matches, ignoring momentum effects and head-to-head dynamics. 
 
-Finally, calibration here is assessed in-sample; an out-of-sample posterior predictive check would provide stronger validation.
+A key limitation arises in the time-varying model: the random-walk prior propagates skill backward in time. As a result, players such as Alcaraz and Sinner receive non-zero skill estimates in early periods before their careers began. This is unrealistic and reflects a limitation of the model structure. A more realistic approach would activate player skill only after their first observed match.
+
+Finally, calibration is evaluated in-sample; future work should include out-of-sample validation. A natural extension would combine both surface and time effects, though this would require stronger regularization to avoid identifiability issues.
 
 
 
