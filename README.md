@@ -16,15 +16,24 @@ This project applies Bayesian latent-skill models to professional ATP tennis mat
 
 ```
 bayesian-tennis-model/
-├── report/
-│   └── STAT405_Report.Rmd       # 4-page PDF submission
+├── data/
+│   └── atp_tennis.csv           # Raw ATP match data (2000–2026)
+|   └── df_model.csv             # Cleaned modelling dataset (output of wrangling_eda.Rmd)
 ├── data_cleaning/
-│   └── wrangling_eda.Rmd                  # Full data wrangling, EDA, and subsetting rationale
+│   └── wrangling_eda.Rmd        # Full data wrangling, EDA, and subsetting rationale
+├── figs/                        # Saved figures (plots)
+│   └── calibration.png
+│   └── career_trajectories.png
+│   └── skill_ranking.png
+│   └── surface_effects.png
 ├── stan/
 │   ├── model1.stan              # Bradley-Terry + surface effects
 │   └── model2.stan              # Time-varying skill (random walk)
-├── df_model.csv                 # Cleaned modelling dataset (output of wrangling_eda.Rmd)
-├── atp_tennis.csv               # Raw ATP match data (2000–2026)
+├── utilities/                   # simPPLe utilities
+│   ├── simple.R              
+│   └── simple_utils.R             
+├── stat_405_project.Rmd         # Final report in Rmd
+├── stat_405_project.pdf         # Final report in pdf     
 └── README.md
 ```
 
